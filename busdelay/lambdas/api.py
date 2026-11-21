@@ -29,6 +29,10 @@ def _clients():
     return _ddb, _redis
 
 
+def _now() -> int:
+    return int(time.time())
+
+
 def _resp(code: int, body) -> dict:
     return {"statusCode": code, "headers": {"content-type": "application/json"}, "body": json.dumps(body)}
 
@@ -70,7 +74,7 @@ def handler(event, context=None):
     query = event.get("queryStringParameters") or {}
     prefix = os.getenv("REDIS_PREFIX", "")
     if path.startswith("/stops/") and path.endswith("/next"):
-        return _resp(200, {"stop_id": params["stop_id"], "buses": next_buses(r, params["stop_id"], query.get("route"), int(time.time()), prefix)})
+        return _resp(200, {"stop_id": params["stop_id"], "buses": next_buses(r, params["stop_id"], query.get("route"), _now(), prefix)})
     if path.startswith("/routes/") and path.endswith("/accuracy"):
         return _resp(200, {"route_id": params["route_id"], "by_hour": route_accuracy(ddb.Table(TABLE_ROUTE_STATS), params["route_id"])})
     return _resp(404, {"error": f"no route for {path}"})

@@ -1,0 +1,67 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Bus delay tracker - writer and API Lambdas, DynamoDB tables
+
+Parameters:
+  KafkaBootstrap: {Type: String, Description: "private-ip:9092 of the EC2 Kafka host"}
+  RedisUrl: {Type: String}
+  SubnetIds: {Type: List<AWS::EC2::Subnet::Id>}
+  SecurityGroupId: {Type: AWS::EC2::SecurityGroup::Id}
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 30
+    MemorySize: 256
+    VpcConfig: {SubnetIds: !Ref SubnetIds, SecurityGroupIds: [!Ref SecurityGroupId]}
+    Environment:
+      Variables: {REDIS_URL: !Ref RedisUrl}
+
+Resources:
+  ArrivalsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: arrivals
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: [{AttributeName: pk, AttributeType: S}, {AttributeName: sk, AttributeType: S}]
+      KeySchema: [{AttributeName: pk, KeyType: HASH}, {AttributeName: sk, KeyType: RANGE}]
+
+  RouteStatsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: route_stats
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: [{AttributeName: route_id, AttributeType: S}, {AttributeName: hour, AttributeType: N}]
+      KeySchema: [{AttributeName: route_id, KeyType: HASH}, {AttributeName: hour, KeyType: RANGE}]
+
+  WriterFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: busdelay.lambdas.writer.handler
+      CodeUri: .
+      Policies:
+        - DynamoDBCrudPolicy: {TableName: !Ref ArrivalsTable}
+        - DynamoDBCrudPolicy: {TableName: !Ref RouteStatsTable}
+      Events:
+        Arrivals:
+          Type: SelfManagedKafka
+          Properties:
+            KafkaBootstrapServers: [!Ref KafkaBootstrap]
+            Topics: [stop.arrivals]
+            ConsumerGroupId: arrival-writer
+            BatchSize: 100
+            StartingPosition: TRIM_HORIZON
+            SourceAccessConfigurations:
+              - {Type: VPC_SUBNET, URI: !Sub "subnet:${SubnetIds}"}
+              - {Type: VPC_SECURITY_GROUP, URI: !Sub "security_group:${SecurityGroupId}"}
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: busdelay.lambdas.api.handler
+      CodeUri: .
+      Policies:
+        - DynamoDBReadPolicy: {TableName: !Ref RouteStatsTable}
+      Events:
+        NextBus: {Type: HttpApi, Properties: {Path: "/stops/{stop_id}/next", Method: GET}}
+        Accuracy: {Type: HttpApi, Properties: {Path: "/routes/{route_id}/accuracy", Method: GET}}

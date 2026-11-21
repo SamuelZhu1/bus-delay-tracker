@@ -64,6 +64,12 @@ class ArrivalDetector:
         # Start from the nearest stop and only emit it if the bus is actually there.
         dists = [haversine_m(p.lat, p.lon, s.lat, s.lon) for s in stops]
         i = min(range(len(stops)), key=dists.__getitem__)
+        # The nearest stop may already be behind the bus. If the bus is closer to the
+        # following stop than the nearest stop is, it has passed it: start from the next one.
+        if dists[i] > self.radius and i + 1 < len(stops):
+            gap = haversine_m(stops[i].lat, stops[i].lon, stops[i + 1].lat, stops[i + 1].lon)
+            if dists[i + 1] < gap:
+                i += 1
         st = {
             "trip_id": p.trip_id,
             "service_date": pick_service_date(stops[0].sched_s, p.ts),

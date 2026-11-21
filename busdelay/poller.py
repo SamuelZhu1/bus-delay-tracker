@@ -31,13 +31,24 @@ def make_producer(bootstrap: str) -> Producer:
     )
 
 
+def produce(producer: Producer, topic: str, key: bytes, value: bytes) -> None:
+    """Produce, waiting for the local queue to drain instead of failing when it's full
+    (a replay or a big trip-updates poll can queue tens of thousands of messages)."""
+    while True:
+        try:
+            producer.produce(topic, key=key, value=value)
+            return
+        except BufferError:
+            producer.poll(0.5)
+
+
 def publish(producer: Producer, dedup: DedupFilter, positions_pb: bytes, trips_pb: bytes | None) -> tuple[int, int]:
     positions = dedup.new_only(parse_positions(positions_pb))
     for p in positions:
-        producer.produce(TOPIC_POSITIONS, key=p["vehicle_id"].encode(), value=json.dumps(p).encode())
+        produce(producer, TOPIC_POSITIONS, p["vehicle_id"].encode(), json.dumps(p).encode())
     preds = parse_predictions(trips_pb) if trips_pb else []
     for p in preds:
-        producer.produce(TOPIC_PREDICTIONS, key=p["trip_id"].encode(), value=json.dumps(p).encode())
+        produce(producer, TOPIC_PREDICTIONS, p["trip_id"].encode(), json.dumps(p).encode())
     producer.poll(0)
     return len(positions), len(preds)
 

@@ -18,6 +18,7 @@ from confluent_kafka import Consumer, KafkaException, Producer
 from .config import TOPIC_ARRIVALS, TOPIC_DEAD_LETTER, TOPIC_POSITIONS, Config
 from .detector import ArrivalDetector
 from .messages import BadMessage, decode_position, encode
+from .poller import produce
 from .state import RedisStore
 
 log = logging.getLogger("detector")
@@ -47,6 +48,8 @@ def run(cfg: Config, group: str = "arrival-detector", redis_prefix: str = "", ba
             "enable.auto.commit": False,
             "auto.offset.reset": "earliest",
             "partition.assignment.strategy": "cooperative-sticky",
+            # A crashed consumer holds its partitions until this expires; keep recovery quick.
+            "session.timeout.ms": 10000,
         }
     )
     producer = Producer({"bootstrap.servers": cfg.kafka_bootstrap, "enable.idempotence": True, "acks": "all", "linger.ms": 20})
@@ -59,13 +62,13 @@ def run(cfg: Config, group: str = "arrival-detector", redis_prefix: str = "", ba
 
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
-    last_msg = time.time()
+    last_msg = None  # idle timer starts after the first message, not while joining the group
     n_pos = n_arr = n_bad = 0
     try:
         while not stop:
             msgs = consumer.consume(num_messages=batch, timeout=1.0)
             if not msgs:
-                if idle_exit_s is not None and time.time() - last_msg > idle_exit_s:
+                if idle_exit_s is not None and last_msg is not None and time.time() - last_msg > idle_exit_s:
                     break
                 continue
             last_msg = time.time()
@@ -79,7 +82,7 @@ def run(cfg: Config, group: str = "arrival-detector", redis_prefix: str = "", ba
                     n_bad += 1
                     continue
                 for a in det.process(p):
-                    producer.produce(TOPIC_ARRIVALS, key=a.key(), value=encode(a))
+                    produce(producer, TOPIC_ARRIVALS, a.key(), encode(a))
                     n_arr += 1
                 n_pos += 1
             # Commit only once everything produced from this batch is on the broker.
