@@ -1,0 +1,24 @@
+[project]
+name = "busdelay"
+version = "0.1.0"
+description = "Streams TransLink real-time bus positions through Kafka to measure real arrival delays"
+requires-python = ">=3.11"
+dependencies = [
+  "confluent-kafka>=2.3",
+  "redis>=5.0",
+  "boto3>=1.34",
+  "gtfs-realtime-bindings>=1.0",
+  "requests>=2.31",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "fakeredis>=2.20", "moto[dynamodb,server]>=5.0"]
+
+[tool.setuptools.packages.find]
+include = ["busdelay*"]
+
+[tool.pytest.ini_options]
+markers = [
+  "integration: needs a real Kafka broker and Redis (docker compose up)",
+]
+addopts = "-m 'not integration'"
